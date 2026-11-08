@@ -1,0 +1,44 @@
+-- Always rolls back. No test gold or reading rows persist; sequences may advance.
+DO $$
+DECLARE clerk uuid; kid uuid; cat uuid; r public.photo_readings; iss public.gold_issues; rec public.gold_receipts;
+ req uuid:=gen_random_uuid(); rid uuid; ok boolean; passed int:=0; failed int:=0; label text:='';
+BEGIN
+ SELECT user_id INTO clerk FROM public.user_roles WHERE role='issue_clerk' LIMIT 1;
+ SELECT id INTO kid FROM public.karigars WHERE karigar_code='KG-001';
+ SELECT id INTO cat FROM public.item_categories WHERE category_name='Necklace';
+ PERFORM set_config('request.jwt.claims',json_build_object('sub',clerk,'role','authenticated')::text,true);
+ INSERT INTO public.photo_readings(user_id,client_request_id,operation,extraction) VALUES(clerk,req,'issue','{"gross_weight":"120.000","purity_percent":null,"confidence":0.98,"warnings":[]}'::jsonb) RETURNING id INTO rid;
+ BEGIN PERFORM public.create_gold_issue(kid,cat,'PHOTO-ROLLBACK',120.000,91.60,current_date,req); ok:=false; EXCEPTION WHEN OTHERS THEN ok:=SQLERRM LIKE '%Confirm or reject%'; END;
+ IF ok THEN passed:=passed+1; ELSE failed:=failed+1; label:=label||'draft '; END IF;
+ r:=public.verify_photo_reading(rid,false,120.000,null,null);
+ BEGIN PERFORM public.create_gold_issue(kid,cat,'PHOTO-ROLLBACK',121.000,91.60,current_date,req); ok:=false; EXCEPTION WHEN OTHERS THEN ok:=SQLERRM LIKE '%differs%'; END;
+ IF ok THEN passed:=passed+1; ELSE failed:=failed+1; label:=label||'mismatch '; END IF;
+ iss:=public.create_gold_issue(kid,cat,'PHOTO-ROLLBACK',120.000,91.60,current_date,req);
+ IF iss.fine_weight=109.920 THEN passed:=passed+1; ELSE failed:=failed+1; label:=label||'ledger '; END IF;
+ SELECT * INTO r FROM public.photo_readings WHERE id=rid;
+ IF r.consumed_entity_id=iss.id THEN passed:=passed+1; ELSE failed:=failed+1; label:=label||'link '; END IF;
+ BEGIN PERFORM public.verify_photo_reading(rid,false,121.000,null,'correction'); ok:=false; EXCEPTION WHEN OTHERS THEN ok:=SQLERRM LIKE '%already used%'; END;
+ IF ok THEN passed:=passed+1; ELSE failed:=failed+1; label:=label||'consumed '; END IF;
+ IF (public.create_gold_issue(kid,cat,'PHOTO-ROLLBACK',120.000,91.60,current_date,req)).id=iss.id THEN passed:=passed+1; ELSE failed:=failed+1; label:=label||'idempotency '; END IF;
+ req:=gen_random_uuid();
+ INSERT INTO public.photo_readings(user_id,client_request_id,operation,extraction) VALUES(clerk,req,'receipt','{"gross_weight":"112.450","purity_percent":"91.60","confidence":0.98,"warnings":[]}'::jsonb) RETURNING id INTO rid;
+ r:=public.verify_photo_reading(rid,false,112.450,91.60,null);
+ rec:=public.create_gold_receipt(iss.id,'jewellery',112.450,91.60,'',current_date,req);
+ IF rec.fine_weight=103.004 THEN passed:=passed+1; ELSE failed:=failed+1; label:=label||'receipt '; END IF;
+ req:=gen_random_uuid();
+ INSERT INTO public.photo_readings(user_id,client_request_id,operation,extraction) VALUES(clerk,req,'issue','{"gross_weight":"120.000","purity_percent":null,"confidence":0.50,"warnings":[]}'::jsonb) RETURNING id INTO rid;
+ BEGIN PERFORM public.verify_photo_reading(rid,false,120,null,null); ok:=false; EXCEPTION WHEN OTHERS THEN ok:=SQLERRM LIKE '%requires a reason%'; END;
+ IF ok THEN passed:=passed+1; ELSE failed:=failed+1; label:=label||'low-confidence '; END IF;
+ r:=public.verify_photo_reading(rid,false,121,null,'Checked scale manually');
+ IF r.verified_weight=121 AND r.status='confirmed' THEN passed:=passed+1; ELSE failed:=failed+1; label:=label||'manual-edit '; END IF;
+ BEGIN PERFORM public.verify_photo_reading(rid,false,121.0001,null,'Checked manually'); ok:=false; EXCEPTION WHEN OTHERS THEN ok:=SQLERRM LIKE '%3 decimals%'; END;
+ IF ok THEN passed:=passed+1; ELSE failed:=failed+1; label:=label||'precision '; END IF;
+ PERFORM set_config('request.jwt.claims',json_build_object('sub',gen_random_uuid(),'role','authenticated')::text,true);
+ BEGIN PERFORM public.verify_photo_reading(rid,false,121,null,'Checked manually'); ok:=false; EXCEPTION WHEN OTHERS THEN ok:=SQLSTATE='42501'; END;
+ IF ok THEN passed:=passed+1; ELSE failed:=failed+1; label:=label||'unauthorised '; END IF;
+ PERFORM set_config('request.jwt.claims',json_build_object('sub',clerk,'role','authenticated')::text,true);
+ r:=public.verify_photo_reading(rid,true,null,null,null);
+ iss:=public.create_gold_issue(kid,cat,'PHOTO-ROLLBACK',10,91.60,current_date,req);
+ IF iss.fine_weight=9.160 THEN passed:=passed+1; ELSE failed:=failed+1; label:=label||'reject-manual '; END IF;
+ RAISE EXCEPTION 'PHOTO_TESTS pass=% fail=% | %',passed,failed,label;
+END $$;

@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1794122161083,
+      "tag": "0000_auric_core_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794122599384,
+      "tag": "0001_revoke_direct_writes",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794122885018,
+      "tag": "0002_masters_and_trend_monitoring",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794143985947,
+      "tag": "0003_verified_photo_readings",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794144753907,
+      "tag": "0004_restrict_photo_reading_grants",
+      "breakpoints": true
+    }
+  ]
+}
