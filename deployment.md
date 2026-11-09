@@ -1,96 +1,226 @@
 # AURIC Deployment Guide
 
-No credentials, secret values or deployment URLs appear in this document.
+AURIC uses Cloudflare Workers for hosting, Supabase for authentication and PostgreSQL, and Google Gemini for AI-assisted scale-photo reading.
 
-## 1. Prerequisites
+The original Lovable deployment is retained separately as a backup. The Cloudflare deployment must use the new Supabase project, not the original Lovable-managed backend.
 
-- Node.js (LTS) and Bun.
-- A Supabase project (database + auth) per environment: development, isolated staging, production.
-- Access to an AI gateway key for the vision model.
-- Git access to the repository.
+## 1. Architecture
 
-## 2. Local installation
+| Component | Service |
+| --- | --- |
+| Frontend and server runtime | Cloudflare Workers |
+| Database | Supabase PostgreSQL |
+| Authentication | Supabase Auth |
+| Authorization | Supabase roles and Row Level Security |
+| AI photo reading | Google Gemini (`gemini-3.8-flash`) |
+| Package manager | Bun |
+
+## 2. Prerequisites
+
+- Git
+- Bun
+- A Cloudflare account with Workers access
+- A Supabase project
+- A Google AI Studio API key
+- Access to the AURIC GitHub repository
+
+## 3. Local installation
 
 1. Clone the repository.
-2. `bun install --frozen-lockfile`
-3. Copy `.env.example` to `.env` and fill in values for your environment.
-4. `bun run dev` and open the printed local address.
-5. Confirm `.env` is not tracked (`git ls-files .env` returns nothing).
+2. Install dependencies:
 
-## 3. Environment variable names
+   `bun install --frozen-lockfile`
 
-| Name | Scope | Purpose |
-| --- | --- | --- |
-| VITE_SUPABASE_URL | Browser (public) | Backend address |
-| VITE_SUPABASE_PUBLISHABLE_KEY | Browser (public) | Publishable key; RLS still applies |
-| VITE_SUPABASE_PROJECT_ID | Browser (public) | Project identifier |
-| SUPABASE_URL | Server | Backend address for server functions |
-| SUPABASE_PUBLISHABLE_KEY | Server | Authenticated server client |
-| SUPABASE_SERVICE_ROLE_KEY | Server secret | Privileged audit writes only; never in browser |
-| LOVABLE_API_KEY | Server secret | AI vision gateway credential |
-| PHOTO_CONFIDENCE_THRESHOLD | Server, optional | 0–1, default 0.90 |
-| AURIC_CLERK_PASSWORD / AURIC_FINANCE_PASSWORD | Test process only | API permission test script |
+3. Copy `.env.example` to `.env`.
+4. Configure the public Supabase values in `.env`.
+5. Create a local `.dev.vars` file for server-only credentials.
+6. Start the development server:
 
-## 4. Supabase configuration
+   `bun run dev`
 
-- One project per environment; never share a database between staging and production.
-- Enable email/password auth; disable anonymous sign-ups; keep email confirmation on.
-- Set the auth Site URL and redirect URLs to the real deployed origin once known.
+7. Verify the application and authentication.
 
-## 5. Database migrations
+Never commit `.env` or `.dev.vars`.
 
-- Apply all versioned migrations in recorded order with the managed migration process (`supabase db push` or equivalent).
-- Never edit or regenerate applied migrations.
-- After applying, confirm RLS is enabled and grants are in place on every application table.
+## 4. Environment variables
 
-## 6. Authentication setup
+### Public browser configuration
 
-- Staff sign in with email and password created through trusted auth administration.
-- No self-registration path should grant roles.
+| Variable | Purpose |
+| --- | --- |
+| VITE_SUPABASE_URL | Supabase project URL |
+| VITE_SUPABASE_PUBLISHABLE_KEY | Supabase publishable key |
+| VITE_SUPABASE_PROJECT_ID | Supabase project identifier |
 
-## 7. Role assignment
+These values are public browser configuration. Database access must remain protected by RLS and application authorization.
 
-Insert a row into `public.user_roles` (`issue_clerk` or `finance_head`) for each user using an administrative database session. Never store roles in profile metadata.
+### Server configuration
 
-## 8. Demo account creation
+| Variable | Purpose |
+| --- | --- |
+| SUPABASE_URL | Supabase server connection |
+| SUPABASE_PUBLISHABLE_KEY | Authenticated Supabase client |
+| SUPABASE_SERVICE_ROLE_KEY | Privileged server-side operations |
+| GEMINI_API_KEY | Gemini photo-reading API access |
+| PHOTO_CONFIDENCE_THRESHOLD | Optional confidence threshold; default 0.90 |
 
-1. Create one Issue Clerk and one Finance Head user via auth administration with unique, securely generated passwords.
-2. Assign their roles as in section 7.
-3. Share passwords through a secure channel only; never in source, seeds or docs.
-4. Rotate any previously shared demo passwords before real use.
+The service-role key bypasses normal RLS protections. It must only be used in trusted server-side code.
 
-## 9. AI server configuration
+Never expose service-role or Gemini credentials through browser code or VITE_ variables.
 
-- Set `LOVABLE_API_KEY` as a server secret; optionally set `PHOTO_CONFIDENCE_THRESHOLD`.
-- The key is read only inside server handlers. Photos are not stored.
-- If AI access fails terminally, a Finance Head resumes it from the app after access is restored.
+## 5. Supabase database setup
 
-## 10. Local testing
+Use a separate Supabase project for each environment.
 
-- `bunx vitest run` — unit and AI-mock tests.
-- `tests/db/*.test.sql` — run against a non-production database; each ends in a rollback exception by design.
-- `tests/api/permissions.sh` — needs the test password variables; attempts only writes expected to be refused.
-- `bun run build` — production build check.
+The staging project for this migration is:
 
-## 11. Deployment
+- Project: `auric-staging`
+- Region: South Asia (Mumbai)
 
-1. Confirm staging results and owner approval.
-2. Apply migrations to the production database.
-3. Set production server secrets.
-4. Publish the approved build. Code rollback does not undo migrations or transactions.
-5. Record the real deployment URL only after success.
+The five application migrations are stored in `drizzle/migrations/`:
 
-## 12. Post-deployment checks
+1. `0000_auric_core_schema.sql`
+2. `0001_revoke_direct_writes.sql`
+3. `0002_masters_and_trend_monitoring.sql`
+4. `0003_verified_photo_readings.sql`
+5. `0004_restrict_photo_reading_grants.sql`
 
-- Sign in as each role; verify page access and sign-out.
-- Confirm Clerk cannot see stock or loss data.
-- Test a real scale/karat-meter photo, confirmation, rejection and mismatch block.
-- Verify balances read back correctly; perform ledger writes only for real jobs.
-- Confirm backups exist and a recovery procedure is documented.
+For the current staging project, these migrations have already been applied sequentially through the Supabase SQL Editor.
+
+For a fresh environment:
+- Review each migration.
+- Apply them in the recorded order.
+- Verify tables, RLS policies, grants, functions and triggers.
+- Do not regenerate or modify migrations that have already been applied.
+
+The Drizzle schema file is intentionally blank. Do not use `drizzle-kit generate` to recreate the existing schema.
+
+## 6. Authentication and roles
+
+Staff accounts must be created through trusted Supabase Auth administration.
+
+Supported application roles:
+
+- `issue_clerk`
+- `finance_head`
+
+Assign roles through `public.user_roles` using an administrative database session.
+
+Do not grant application roles through user-editable profile metadata.
+
+Disable public self-registration unless a reviewed registration workflow is implemented.
+
+## 7. Demo accounts
+
+Create separate Issue Clerk and Finance Head accounts for staging.
+
+1. Create users through Supabase Auth administration.
+2. Assign their roles in `public.user_roles`.
+3. Use unique passwords.
+4. Never store passwords in source code, SQL seeds, documentation or Git.
+5. Do not reuse previously shared demo credentials for production.
+
+## 8. Gemini configuration
+
+AURIC uses Google's Gemini API with the `gemini-3.8-flash` model for photo transcription.
+
+Configure `GEMINI_API_KEY` as a server-side secret.
+
+The AI extracts visible readings; it does not independently authorize or save gold transactions.
+
+Human verification remains mandatory. Unreadable or ambiguous values must not be guessed.
+
+The optional `PHOTO_CONFIDENCE_THRESHOLD` defaults to `0.90`.
+
+Gemini free-tier quotas and data-use terms may differ from paid-tier terms. Use synthetic test images until the applicable data-handling terms have been reviewed. Do not submit real customer documents or confidential financial information without approval.
+
+## 9. Local server secrets
+
+Use `.dev.vars` for local Cloudflare development.
+
+Keep server credentials in that file and never commit it.
+
+Do not copy private credentials into `.env.example`, frontend code or source control.
+
+## 10. Cloudflare setup
+
+1. Authenticate Wrangler:
+
+   `bunx wrangler login`
+
+2. Verify the account:
+
+   `bunx wrangler whoami`
+
+3. Configure the required public build variables in the Cloudflare build environment:
+
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_PUBLISHABLE_KEY`
+   - `VITE_SUPABASE_PROJECT_ID`
+
+4. Configure the server secrets using Wrangler:
+
+   `bunx wrangler secret put SUPABASE_URL`
+
+   `bunx wrangler secret put SUPABASE_PUBLISHABLE_KEY`
+
+   `bunx wrangler secret put SUPABASE_SERVICE_ROLE_KEY`
+
+   `bunx wrangler secret put GEMINI_API_KEY`
+
+5. Deploy only after the staging checks pass:
+
+   `bun run deploy`
+
+Never place private secrets in Wrangler configuration files or GitHub.
+
+## 11. Validation before deployment
+
+Run:
+
+- `bunx tsc --noEmit`
+- `bun run test`
+- `bun run build`
+- `bunx wrangler deploy --dry-run`
+
+Verify:
+- TypeScript compilation succeeds.
+- All automated tests pass.
+- Production build succeeds.
+- Wrangler dry-run succeeds.
+- The deployed environment uses the intended Supabase project.
+- No private credentials are included in generated browser assets.
+
+## 12. Post-deployment verification
+
+After deployment:
+
+1. Sign in as an Issue Clerk.
+2. Sign in as a Finance Head.
+3. Verify role-specific access and sign-out.
+4. Confirm the Issue Clerk cannot access restricted stock and loss information.
+5. Verify gold issue and receipt calculations to three decimal places.
+6. Verify running balances and loss alerts.
+7. Test photo reading using synthetic images.
+8. Confirm manual verification and mismatch blocking.
+9. Verify audit records and daily stock statements.
+10. Confirm backups and a recovery procedure.
+
+Do not use real gold transactions for initial deployment testing.
 
 ## 13. Security requirements
 
-- Never commit `.env`; add a literal `.env` line to `.gitignore`.
-- Service-role and AI keys stay server-side only.
-- Keep RLS and role checks intact; gold records stay immutable; corrections use adjustments.
-- Review security scan results before every release.
+- Never commit `.env`, `.dev.vars` or private credentials.
+- Keep service-role and Gemini API keys server-side.
+- Preserve RLS, database grants and application role checks.
+- Keep gold ledger records immutable.
+- Use authorized adjustment workflows for corrections.
+- Review security and access controls before production use.
+
+## 14. Deployment status
+
+The Cloudflare configuration and migration are being prepared on the `deploy/cloudflare` branch.
+
+A successful local build or Wrangler dry-run does not mean the application has been deployed.
+
+Record the actual Cloudflare deployment URL only after a successful deployment and post-deployment verification.

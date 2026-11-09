@@ -38,3 +38,5 @@ dist-ssr
 
 # Local builder metadata
 .lovable/
+
+migration-backup/
