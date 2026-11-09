@@ -1,57 +1,26 @@
-import { createOpenAI } from "@ai-sdk/openai";
-import { streamText, Output, type ModelMessage } from "ai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { generateText, Output, type ModelMessage } from "ai";
 import type { extractionSchema } from "../photo-reading";
 
-import {
-  createLovableAiGatewayRunIdFetch,
-  getLovableAiGatewayRunId,
-  withLovableAiGatewayRunIdHeader,
-} from "./run-id.server.ts";
-
-export function createResponsesCall(
+export async function createResponsesCall(
   request: Request,
-  config: { baseURL: string; apiKey: string; model: string },
+  config: { apiKey: string; model: string },
   messages: ModelMessage[],
   instructions?: string,
   schema?: typeof extractionSchema,
 ) {
-  const runIdFetch = createLovableAiGatewayRunIdFetch(getLovableAiGatewayRunId(request));
-  const provider = createOpenAI({
-    baseURL: `${config.baseURL.replace(/\/+$/, "").replace(/\/v1$/, "")}/v1`,
+  const provider = createGoogleGenerativeAI({
     apiKey: config.apiKey,
-    headers: { "Lovable-API-Key": config.apiKey, "X-Lovable-AIG-SDK": "vercel-ai-sdk" },
-    fetch: runIdFetch.fetch,
   });
-  const reasoning = config.model !== "openai/chat-latest";
-  const result = streamText({
-    model: provider.responses(config.model),
-    // AI SDK 6 lacks `instructions`: rename this key to `system` there.
-    ...(instructions ? { instructions } : {}),
+
+  const result = await generateText({
+    model: provider(config.model),
+    ...(instructions ? { system: instructions } : {}),
     messages,
     maxRetries: 0,
-    onError: () => {}, // Errors are returned safely by the caller; never log image payloads.
-    ...(schema ? { output: Output.object({ schema }) } : {}),
     abortSignal: request.signal,
-    providerOptions: {
-      openai: {
-        store: false,
-        ...(reasoning
-          ? {
-              forceReasoning: true,
-              reasoningEffort: "medium",
-              reasoningSummary: "auto",
-              include: ["reasoning.encrypted_content"],
-            }
-          : {}),
-      },
-    },
+    ...(schema ? { output: Output.object({ schema }) } : {}),
   });
-  return {
-    result,
-    response: () =>
-      withLovableAiGatewayRunIdHeader(
-        result.toUIMessageStreamResponse({ sendReasoning: true }),
-        runIdFetch,
-      ),
-  };
+
+  return { result };
 }

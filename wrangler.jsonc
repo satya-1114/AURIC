@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "auric",
+  "compatibility_date": "2026-08-05",
+  "main": "@tanstack/react-start/server-entry",
+  "observability": {
+    "enabled": true
+  }
+}

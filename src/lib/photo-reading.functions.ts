@@ -59,14 +59,14 @@ export const analyzePhoto = createServerFn({ method: "POST" })
     else if (access.data?.blocked_message) errorMessage = access.data.blocked_message;
     else {
       try {
-        const apiKey = process.env["LOVABLE_API_KEY"];
+        const apiKey = process.env["GEMINI_API_KEY"];
         if (!apiKey) throw new Error("AI configuration missing");
-        const { result } = createResponsesCall(
+
+        const { result } = await createResponsesCall(
           getRequest(),
           {
-            baseURL: "https://ai.gateway.lovable.dev/v1",
             apiKey,
-            model: "openai/gpt-6-astra",
+            model: "gemini-3.8-flash",
           },
           [
             {
